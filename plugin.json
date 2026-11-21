@@ -1,0 +1,16 @@
+{
+  "slug": "SuperparasitesDev",
+  "name": "Superparasites Dev",
+  "version": "2.0.0",
+  "license": "MIT",
+  "brand": "Superparasites",
+  "author": "Superparasites contributors",
+  "modules": [
+    {
+      "slug": "Superparasites",
+      "name": "Superparasites Dev",
+      "description": "Development module for auditioning the eight Superparasites DSP modes",
+      "tags": ["Effect", "Granular", "Delay", "Reverb"]
+    }
+  ]
+}
