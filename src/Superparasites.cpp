@@ -1,5 +1,6 @@
 #include <rack.hpp>
 
+#include "PendulumVoice.hpp"
 #include "supercell/dsp/granular_processor.h"
 #include "supercell/resources.h"
 
@@ -10,10 +11,11 @@ namespace {
 constexpr int kDspSampleRate = 32000;
 constexpr int kBlockSize = 32;
 constexpr float kAudioFullScale = 5.f;
+constexpr int kPendulumMode = clouds::PLAYBACK_MODE_ADSR;
 
 const std::vector<std::string> kModes = {
   "Granular", "Pitch Shift / Time Stretch", "Looping Delay", "Spectral Madness",
-  "Oliverb", "Resonestor", "Beat Repeat", "Spectral Clouds",
+  "Oliverb", "Resonestor", "Beat Repeat", "Chaotic Pendulum",
 };
 static_assert(clouds::PLAYBACK_MODE_LAST == 8, "Update the Rack mode selector");
 
@@ -31,6 +33,8 @@ struct Superparasites : engine::Module {
   alignas(16) std::array<uint8_t, 118784> largeMemory{};
   alignas(16) std::array<uint8_t, 65536 - 128> smallMemory{};
   clouds::GranularProcessor processor{};
+  PendulumVoice pendulum;
+  bool pendulumActive = false;
 
   using StereoFrame = dsp::Frame<2>;
   dsp::SampleRateConverter<2> inputConverter, outputConverter;
@@ -81,26 +85,53 @@ struct Superparasites : engine::Module {
 
   void renderBlock() {
     const int mode = std::lround(params[MODE].getValue());
-    processor.set_playback_mode(static_cast<clouds::PlaybackMode>(mode));
-    processor.set_quality(std::lround(params[QUALITY].getValue()));
-    processor.Prepare();
-
     std::array<float, 9> controls;
     for (size_t i = 0; i < controls.size(); ++i) {
       controls[i] = clamp(params[CONTROL + i].getValue() + inputs[CV + i].getVoltage() / 5.f, 0.f, 1.f);
     }
 
-    auto& p = *processor.mutable_parameters();
-    p.position = controls[0];
-    p.size = controls[1];
     const float pitchKnob = params[CONTROL + 2].getValue();
     const float pitchCv = inputs[VOCT].getVoltage();
     constexpr int pitchTableEnd = LUT_QUANTIZED_PITCH_SIZE - 1;
     const float pitch = pitchKnob < 1.f
       ? stmlib::Interpolate(clouds::lut_quantized_pitch, pitchKnob, pitchTableEnd)
       : clouds::lut_quantized_pitch[pitchTableEnd];
-    p.pitch = clamp(pitch
+    const float semitones = clamp(pitch
       + 12.f * pitchCv + 2.4f * inputs[CV + 2].getVoltage(), -48.f, 48.f);
+
+    StereoFrame rendered[kBlockSize];
+    if (mode == kPendulumMode) {
+      if (!pendulumActive) {
+        pendulum.reset();
+      }
+      pendulum.configure(clockGate.isHigh() || captureButton.isHigh(), semitones,
+        controls[0], controls[3], controls[1], controls[4],
+        controls[5], controls[6], controls[7], controls[8]);
+      for (auto& frame : rendered) {
+        const float sample = pendulum.next();
+        frame = {{sample, sample}};
+      }
+    } else {
+      renderEffect(mode, controls, semitones, pitchKnob, pitchCv, rendered);
+    }
+    pendulumActive = mode == kPendulumMode;
+    capturePending = false;
+    int consumed = kBlockSize;
+    int produced = outputQueue.capacity();
+    outputConverter.process(rendered, &consumed, outputQueue.endData(), &produced);
+    outputQueue.endIncr(produced);
+  }
+
+  void renderEffect(int mode, const std::array<float, 9>& controls, float semitones,
+                    float pitchKnob, float pitchCv, StereoFrame* rendered) {
+    processor.set_playback_mode(static_cast<clouds::PlaybackMode>(mode));
+    processor.set_quality(std::lround(params[QUALITY].getValue()));
+    processor.Prepare();
+
+    auto& p = *processor.mutable_parameters();
+    p.position = controls[0];
+    p.size = controls[1];
+    p.pitch = semitones;
     p.density = controls[3];
     p.texture = controls[4];
     p.dry_wet = clamp(1.05f * controls[5] - 0.025f, 0.f, 1.f);
@@ -110,7 +141,6 @@ struct Superparasites : engine::Module {
     p.freeze = params[FREEZE].getValue() > 0.5f || freezeGate.isHigh();
     p.capture = capturePending;
     p.gate = clockGate.isHigh() || captureButton.isHigh() || capturePending;
-    capturePending = false;
 
     p.kammerl.slice_selection = clamp(inputs[CV + 4].getVoltage() / 5.f, 0.f, 1.f);
     p.kammerl.slice_modulation = params[CONTROL + 4].getValue();
@@ -128,14 +158,9 @@ struct Superparasites : engine::Module {
     }
     processor.Process(in, out, kBlockSize);
 
-    StereoFrame rendered[kBlockSize];
     for (int i = 0; i < kBlockSize; ++i) {
       rendered[i] = {{out[i].l / 32768.f, out[i].r / 32768.f}};
     }
-    int consumed = kBlockSize;
-    int produced = outputQueue.capacity();
-    outputConverter.process(rendered, &consumed, outputQueue.endData(), &produced);
-    outputQueue.endIncr(produced);
   }
 
   void process(const ProcessArgs&) override {
@@ -174,6 +199,10 @@ struct Superparasites : engine::Module {
 
 constexpr float kPanelWidth = 225.f;
 constexpr std::array<float, 4> kEffectColumns = {33.f, 86.f, 139.f, 192.f};
+constexpr std::array<int, 4> kSliderControls = {0, 3, 1, 4};
+constexpr std::array<const char*, 4> kAdsrLabels = {"Attack", "Decay", "Sustain", "Release"};
+constexpr std::array<const char*, 4> kEffectLabels = {"Mix", "Pan", "Feedback", "Reverb"};
+constexpr std::array<const char*, 4> kPendulumLabels = {"Amount", "Shape", "Fold", "Animate"};
 
 struct Panel : widget::Widget {
   int mode = 0;
@@ -239,6 +268,9 @@ struct AmberSlider : VCVSlider {
 struct SuperparasitesWidget : app::ModuleWidget {
   Panel* faceplate;
   ui::Label* modeName;
+  ui::Label* clockLabel;
+  std::array<ui::Label*, 4> sliderLabels;
+  std::array<ui::Label*, 4> effectLabels;
 
   SuperparasitesWidget(Superparasites* module) {
     setModule(module);
@@ -262,11 +294,10 @@ struct SuperparasitesWidget : app::ModuleWidget {
     label("Trig", 204.f, 50.f, 36.f);
     addParam(createParamCentered<LEDButton>(math::Vec(204.f, top), module, Superparasites::CAPTURE));
 
-    constexpr std::array<int, 4> sliderControls = {0, 3, 1, 4};
     for (size_t i = 0; i < kEffectColumns.size(); ++i) {
-      const int control = sliderControls[i];
+      const int control = kSliderControls[i];
       const float x = kEffectColumns[i];
-      label(kControlNames[control], x, 106.f, 56.f);
+      sliderLabels[i] = label(kControlNames[control], x, 106.f, 56.f);
       addParam(createParamCentered<AmberSlider>(math::Vec(x, 155.f), module, Superparasites::CONTROL + control));
       addInput(createInputCentered<PJ301MPort>(math::Vec(x, 209.f), module, Superparasites::CV + control));
     }
@@ -274,14 +305,14 @@ struct SuperparasitesWidget : app::ModuleWidget {
     for (size_t i = 0; i < kEffectColumns.size(); ++i) {
       const int control = 5 + i;
       const float x = kEffectColumns[i];
-      label(control == 6 ? "Pan" : kControlNames[control], x, 239.f, 59.f);
+      effectLabels[i] = label(kEffectLabels[i], x, 239.f, 59.f);
       addParam(createParamCentered<RoundBlackKnob>(math::Vec(x, 264.f), module, Superparasites::CONTROL + control));
       addInput(createInputCentered<PJ301MPort>(math::Vec(x, 301.f), module, Superparasites::CV + control));
     }
 
     input(module, Superparasites::LEFT, "In L", 24.f, 354.f, 21.f);
     input(module, Superparasites::RIGHT, "In R", 59.f, 354.f, 21.f);
-    input(module, Superparasites::CLOCK, "Clock", 95.f, 354.f, 21.f);
+    clockLabel = input(module, Superparasites::CLOCK, "Clock", 95.f, 354.f, 21.f);
     input(module, Superparasites::FREEZE_GATE, "Hold", 130.f, 354.f, 21.f);
     label("Out L", 166.f, 333.f, 46.f);
     label("Out R", 201.f, 333.f, 46.f);
@@ -292,9 +323,15 @@ struct SuperparasitesWidget : app::ModuleWidget {
   void step() override {
     if (module) {
       const int mode = std::lround(module->params[Superparasites::MODE].getValue());
-      faceplate->mode = mode;
-      if (modeName->text != kModes[mode]) {
+      if (faceplate->mode != mode) {
+        faceplate->mode = mode;
         modeName->text = kModes[mode];
+        const bool pendulum = mode == kPendulumMode;
+        clockLabel->text = pendulum ? "Gate" : "Clock";
+        for (size_t i = 0; i < sliderLabels.size(); ++i) {
+          sliderLabels[i]->text = pendulum ? kAdsrLabels[i] : kControlNames[kSliderControls[i]];
+          effectLabels[i]->text = pendulum ? kPendulumLabels[i] : kEffectLabels[i];
+        }
       }
     }
     ModuleWidget::step();
@@ -312,9 +349,9 @@ struct SuperparasitesWidget : app::ModuleWidget {
     return caption;
   }
 
-  void input(Superparasites* module, int id, const char* name, float x, float y, float labelOffset) {
-    label(name, x, y - labelOffset, 46.f);
+  ui::Label* input(Superparasites* module, int id, const char* name, float x, float y, float labelOffset) {
     addInput(createInputCentered<PJ301MPort>(math::Vec(x, y), module, id));
+    return label(name, x, y - labelOffset, 46.f);
   }
 };
 
