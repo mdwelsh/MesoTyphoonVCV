@@ -414,5 +414,5 @@ struct MesoTyphoonWidget : SuperparasitesWidget {
 
 void init(Plugin* plugin) {
   plugin->addModel(createModel<Typhoon, TyphoonWidget>("Typhoon"));
-  plugin->addModel(createModel<MesoTyphoon, MesoTyphoonWidget>("Superparasites"));
+  plugin->addModel(createModel<MesoTyphoon, MesoTyphoonWidget>("MesoTyphoon"));
 }
