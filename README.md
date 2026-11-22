@@ -1,7 +1,7 @@
 # Superparasites Dev for VCV Rack 2
 
 This local development module builds the same processor and resources used by
-the firmware. It exposes all eight modes and the four mono/stereo, 8-/16-bit
+the firmware. It exposes eight modes and the four mono/stereo, 8-/16-bit
 quality settings. It resamples Rack audio to 32 kHz and processes 32-frame
 blocks. An unpatched right input takes the left input.
 
@@ -30,8 +30,15 @@ groups Position, Density, Size, and Texture into four sliders, with Mix, Pan,
 Feedback, and Reverb below them, following the
 [Typhoon layout](https://afterlateraudio.com/products/typhoon). The four LEDs
 by the mode name show the Typhoon's mode pattern. The **Clock** input accepts a trigger
-or clock, and **Trig** fires a manual trigger. Beat Repeat needs incoming clock
-pulses to establish tempo. Use **Freeze** or the **Hold** gate input to hold the buffer.
+or clock, and **Trig** fires a manual trigger. Use **Freeze** or the **Hold**
+gate input to hold the buffer in recording modes.
+
+In **Shoegaze** mode, patch audio into **In L/R**. The four sliders are
+**Pre Decay**, **Post Decay**, **Fuzz**, and **Tone**. The first two knobs are
+**Pre Mix** and **Post Mix**. **Feedback** sends the post-reverb tail back
+through the fuzz, and **Mod Depth** adds pitch movement to the post-reverb.
+For a starting point, set both mixes around
+one-third, both decays around three-quarters, and bring up Fuzz to taste.
 
 In Rack's **Chaotic Pendulum** mode, patch pitch CV to **V/oct**, a note gate to
 **Gate**, and either output to your monitoring chain. The **Trig** button also

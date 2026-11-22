@@ -15,7 +15,7 @@ constexpr int kRackPendulumSlot = 7;
 
 const std::vector<std::string> kModes = {
   "Granular", "Pitch Shift / Time Stretch", "Looping Delay", "Spectral Madness",
-  "Oliverb", "Resonestor", "Beat Repeat", "Chaotic Pendulum",
+  "Oliverb", "Resonestor", "Shoegaze", "Chaotic Pendulum",
 };
 static_assert(clouds::PLAYBACK_MODE_ADSR == kRackPendulumSlot, "Update the Rack mode mapping");
 
@@ -182,6 +182,8 @@ constexpr std::array<int, 4> kSliderControls = {0, 3, 1, 4};
 constexpr std::array<const char*, 4> kAdsrLabels = {"Attack", "Decay", "Sustain", "Release"};
 constexpr std::array<const char*, 4> kEffectLabels = {"Mix", "Pan", "Feedback", "Reverb"};
 constexpr std::array<const char*, 4> kPendulumLabels = {"Amount", "Shape", "Fold", "Animate"};
+constexpr std::array<const char*, 4> kShoegazeSliderLabels = {"Pre Decay", "Post Decay", "Fuzz", "Tone"};
+constexpr std::array<const char*, 4> kShoegazeKnobLabels = {"Pre Mix", "Post Mix", "Feedback", "Mod Depth"};
 
 struct Panel : widget::Widget {
   int mode = 0;
@@ -284,7 +286,7 @@ struct SuperparasitesWidget : app::ModuleWidget {
     for (size_t i = 0; i < kEffectColumns.size(); ++i) {
       const int control = 5 + i;
       const float x = kEffectColumns[i];
-      effectLabels[i] = label(kEffectLabels[i], x, 239.f, 59.f);
+      effectLabels[i] = label(kEffectLabels[i], x, 239.f, 65.f);
       addParam(createParamCentered<RoundBlackKnob>(math::Vec(x, 264.f), module, Superparasites::CONTROL + control));
       addInput(createInputCentered<PJ301MPort>(math::Vec(x, 301.f), module, Superparasites::CV + control));
     }
@@ -306,10 +308,19 @@ struct SuperparasitesWidget : app::ModuleWidget {
         faceplate->mode = mode;
         modeName->text = kModes[mode];
         const bool pendulum = mode == kRackPendulumSlot;
+        const bool shoegaze = mode == clouds::PLAYBACK_MODE_SHOEGAZE;
         clockLabel->text = pendulum ? "Gate" : "Clock";
         for (size_t i = 0; i < sliderLabels.size(); ++i) {
-          sliderLabels[i]->text = pendulum ? kAdsrLabels[i] : kControlNames[kSliderControls[i]];
-          effectLabels[i]->text = pendulum ? kPendulumLabels[i] : kEffectLabels[i];
+          if (pendulum) {
+            sliderLabels[i]->text = kAdsrLabels[i];
+            effectLabels[i]->text = kPendulumLabels[i];
+          } else if (shoegaze) {
+            sliderLabels[i]->text = kShoegazeSliderLabels[i];
+            effectLabels[i]->text = kShoegazeKnobLabels[i];
+          } else {
+            sliderLabels[i]->text = kControlNames[kSliderControls[i]];
+            effectLabels[i]->text = kEffectLabels[i];
+          }
         }
       }
     }
