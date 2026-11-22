@@ -1,6 +1,5 @@
 #include <rack.hpp>
 
-#include "PendulumVoice.hpp"
 #include "supercell/dsp/granular_processor.h"
 #include "supercell/resources.h"
 
@@ -11,13 +10,14 @@ namespace {
 constexpr int kDspSampleRate = 32000;
 constexpr int kBlockSize = 32;
 constexpr float kAudioFullScale = 5.f;
-constexpr int kPendulumMode = clouds::PLAYBACK_MODE_ADSR;
+// Preserve Rack's saved slot number. Hardware has a separate ADSR slot.
+constexpr int kRackPendulumSlot = 7;
 
 const std::vector<std::string> kModes = {
   "Granular", "Pitch Shift / Time Stretch", "Looping Delay", "Spectral Madness",
   "Oliverb", "Resonestor", "Beat Repeat", "Chaotic Pendulum",
 };
-static_assert(clouds::PLAYBACK_MODE_LAST == 8, "Update the Rack mode selector");
+static_assert(clouds::PLAYBACK_MODE_ADSR == kRackPendulumSlot, "Update the Rack mode mapping");
 
 const std::array<const char*, 9> kControlNames = {
   "Position", "Size", "Pitch", "Density", "Texture",
@@ -33,8 +33,6 @@ struct Superparasites : engine::Module {
   alignas(16) std::array<uint8_t, 118784> largeMemory{};
   alignas(16) std::array<uint8_t, 65536 - 128> smallMemory{};
   clouds::GranularProcessor processor{};
-  PendulumVoice pendulum;
-  bool pendulumActive = false;
 
   using StereoFrame = dsp::Frame<2>;
   dsp::SampleRateConverter<2> inputConverter, outputConverter;
@@ -84,7 +82,13 @@ struct Superparasites : engine::Module {
   }
 
   void renderBlock() {
-    const int mode = std::lround(params[MODE].getValue());
+    const int slot = std::lround(params[MODE].getValue());
+    const bool pendulum = slot == kRackPendulumSlot;
+    processor.set_playback_mode(pendulum
+      ? clouds::PLAYBACK_MODE_PENDULUM : static_cast<clouds::PlaybackMode>(slot));
+    processor.set_quality(std::lround(params[QUALITY].getValue()));
+    processor.Prepare();
+
     std::array<float, 9> controls;
     for (size_t i = 0; i < controls.size(); ++i) {
       controls[i] = clamp(params[CONTROL + i].getValue() + inputs[CV + i].getVoltage() / 5.f, 0.f, 1.f);
@@ -96,51 +100,21 @@ struct Superparasites : engine::Module {
     const float pitch = pitchKnob < 1.f
       ? stmlib::Interpolate(clouds::lut_quantized_pitch, pitchKnob, pitchTableEnd)
       : clouds::lut_quantized_pitch[pitchTableEnd];
-    const float semitones = clamp(pitch
-      + 12.f * pitchCv + 2.4f * inputs[CV + 2].getVoltage(), -48.f, 48.f);
-
-    StereoFrame rendered[kBlockSize];
-    if (mode == kPendulumMode) {
-      if (!pendulumActive) {
-        pendulum.reset();
-      }
-      pendulum.configure(clockGate.isHigh() || captureButton.isHigh(), semitones,
-        controls[0], controls[3], controls[1], controls[4],
-        controls[5], controls[6], controls[7], controls[8]);
-      for (auto& frame : rendered) {
-        const float sample = pendulum.next();
-        frame = {{sample, sample}};
-      }
-    } else {
-      renderEffect(mode, controls, semitones, pitchKnob, pitchCv, rendered);
-    }
-    pendulumActive = mode == kPendulumMode;
-    capturePending = false;
-    int consumed = kBlockSize;
-    int produced = outputQueue.capacity();
-    outputConverter.process(rendered, &consumed, outputQueue.endData(), &produced);
-    outputQueue.endIncr(produced);
-  }
-
-  void renderEffect(int mode, const std::array<float, 9>& controls, float semitones,
-                    float pitchKnob, float pitchCv, StereoFrame* rendered) {
-    processor.set_playback_mode(static_cast<clouds::PlaybackMode>(mode));
-    processor.set_quality(std::lround(params[QUALITY].getValue()));
-    processor.Prepare();
-
     auto& p = *processor.mutable_parameters();
     p.position = controls[0];
     p.size = controls[1];
-    p.pitch = semitones;
+    p.pitch = clamp(pitch
+      + 12.f * pitchCv + 2.4f * inputs[CV + 2].getVoltage(), -48.f, 48.f);
     p.density = controls[3];
     p.texture = controls[4];
-    p.dry_wet = clamp(1.05f * controls[5] - 0.025f, 0.f, 1.f);
+    p.dry_wet = pendulum ? controls[5] : clamp(1.05f * controls[5] - 0.025f, 0.f, 1.f);
     p.stereo_spread = controls[6];
     p.feedback = controls[7];
     p.reverb = controls[8];
     p.freeze = params[FREEZE].getValue() > 0.5f || freezeGate.isHigh();
     p.capture = capturePending;
-    p.gate = clockGate.isHigh() || captureButton.isHigh() || capturePending;
+    p.gate = clockGate.isHigh() || captureButton.isHigh() || (!pendulum && capturePending);
+    capturePending = false;
 
     p.kammerl.slice_selection = clamp(inputs[CV + 4].getVoltage() / 5.f, 0.f, 1.f);
     p.kammerl.slice_modulation = params[CONTROL + 4].getValue();
@@ -158,9 +132,14 @@ struct Superparasites : engine::Module {
     }
     processor.Process(in, out, kBlockSize);
 
+    StereoFrame rendered[kBlockSize];
     for (int i = 0; i < kBlockSize; ++i) {
       rendered[i] = {{out[i].l / 32768.f, out[i].r / 32768.f}};
     }
+    int consumed = kBlockSize;
+    int produced = outputQueue.capacity();
+    outputConverter.process(rendered, &consumed, outputQueue.endData(), &produced);
+    outputQueue.endIncr(produced);
   }
 
   void process(const ProcessArgs&) override {
@@ -326,7 +305,7 @@ struct SuperparasitesWidget : app::ModuleWidget {
       if (faceplate->mode != mode) {
         faceplate->mode = mode;
         modeName->text = kModes[mode];
-        const bool pendulum = mode == kPendulumMode;
+        const bool pendulum = mode == kRackPendulumSlot;
         clockLabel->text = pendulum ? "Gate" : "Clock";
         for (size_t i = 0; i < sliderLabels.size(); ++i) {
           sliderLabels[i]->text = pendulum ? kAdsrLabels[i] : kControlNames[kSliderControls[i]];

@@ -46,7 +46,8 @@ For a first patch, use a short attack, medium decay, some sustain, and a short
 release. Start with Fold at minimum and Animate at noon to hear the Shape sweep.
 Then set Shape low and Amount around halfway to hear Animate's beating clearly.
 The voice is mono and sends the same signal to both outputs.
-The physical firmware still uses slot eight for ADSR Envelope.
+The same voice is available in hardware slot nine. Rack keeps it in slot eight
+to preserve existing patches.
 
 This desktop wrapper approximates the Typhoon's control scaling. Rack input
 full scale is ±5 V. The wrapper does not simulate the Typhoon's analog signal
