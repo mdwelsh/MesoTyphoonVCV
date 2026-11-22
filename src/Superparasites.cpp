@@ -10,14 +10,49 @@ namespace {
 constexpr int kDspSampleRate = 32000;
 constexpr int kBlockSize = 32;
 constexpr float kAudioFullScale = 5.f;
-// Preserve Rack's saved slot number. Hardware has a separate ADSR slot.
-constexpr int kRackPendulumSlot = 7;
+enum class Version { Typhoon, MesoTyphoon };
 
-const std::vector<std::string> kModes = {
-  "Granular", "Pitch Shift / Time Stretch", "Looping Delay", "Spectral Madness",
-  "Oliverb", "Resonestor", "Shoegaze", "Chaotic Pendulum",
+struct Mode {
+  const char* name;
+  clouds::PlaybackMode playback;
+  unsigned leds;
 };
-static_assert(clouds::PLAYBACK_MODE_ADSR == kRackPendulumSlot, "Update the Rack mode mapping");
+
+constexpr Mode kSharedModes[] = {
+  {"Granular", clouds::PLAYBACK_MODE_GRANULAR, 0x1},
+  {"Pitch Shift / Time Stretch", clouds::PLAYBACK_MODE_STRETCH, 0x2},
+  {"Looping Delay", clouds::PLAYBACK_MODE_LOOPING_DELAY, 0x4},
+  {"Spectral Madness", clouds::PLAYBACK_MODE_SPECTRAL, 0x8},
+  {"Oliverb", clouds::PLAYBACK_MODE_OLIVERB, 0xe},
+  {"Resonestor", clouds::PLAYBACK_MODE_RESONESTOR, 0xd},
+};
+
+constexpr Mode kOriginalModes[] = {
+  {"Beat Repeat", clouds::PLAYBACK_MODE_KAMMERL, 0xb},
+  {"Spectral Clouds", clouds::PLAYBACK_MODE_SPECTRAL_CLOUD, 0x7},
+};
+
+// Preserve existing Rack slots for Shoegaze and Chaotic Pendulum.
+constexpr Mode kForkModes[] = {
+  {"Shoegaze", clouds::PLAYBACK_MODE_SHOEGAZE, 0xb},
+  {"Chaotic Pendulum", clouds::PLAYBACK_MODE_PENDULUM, 0xf},
+  {"ADSR Envelope", clouds::PLAYBACK_MODE_ADSR, 0x7},
+};
+
+constexpr int kSharedModeCount = sizeof(kSharedModes) / sizeof(Mode);
+
+int modeCount(Version version) {
+  return kSharedModeCount + (version == Version::Typhoon
+    ? sizeof(kOriginalModes) / sizeof(Mode) : sizeof(kForkModes) / sizeof(Mode));
+}
+
+const Mode& modeAt(Version version, int slot) {
+  if (slot < kSharedModeCount) {
+    return kSharedModes[slot];
+  }
+  const Mode* extra = version == Version::Typhoon ? kOriginalModes : kForkModes;
+  return extra[slot - kSharedModeCount];
+}
 
 const std::array<const char*, 9> kControlNames = {
   "Position", "Size", "Pitch", "Density", "Texture",
@@ -28,6 +63,8 @@ struct Superparasites : engine::Module {
   enum ParamId { MODE, QUALITY, FREEZE, CAPTURE, CONTROL, NUM_PARAMS = CONTROL + 9 };
   enum InputId { LEFT, RIGHT, CLOCK, FREEZE_GATE, VOCT, CV, NUM_INPUTS = CV + 9 };
   enum OutputId { OUT_LEFT, OUT_RIGHT, NUM_OUTPUTS };
+
+  const Version version;
 
   // The embedded processor starts with zero-initialized state on the STM32.
   alignas(16) std::array<uint8_t, 118784> largeMemory{};
@@ -43,9 +80,13 @@ struct Superparasites : engine::Module {
   dsp::SchmittTrigger clockGate, captureButton, freezeGate;
   bool capturePending = false;
 
-  Superparasites() {
+  explicit Superparasites(Version version) : version(version) {
     config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, 0);
-    configSwitch(MODE, 0, kModes.size() - 1, 0, "Mode", kModes);
+    std::vector<std::string> modeNames;
+    for (int slot = 0; slot < modeCount(version); ++slot) {
+      modeNames.emplace_back(modeAt(version, slot).name);
+    }
+    configSwitch(MODE, 0, modeNames.size() - 1, 0, "Mode", modeNames);
     configSwitch(QUALITY, 0, 3, 0, "Quality", {
       "Stereo 16-bit", "Mono 16-bit", "Stereo 8-bit", "Mono 8-bit",
     });
@@ -82,10 +123,9 @@ struct Superparasites : engine::Module {
   }
 
   void renderBlock() {
-    const int slot = std::lround(params[MODE].getValue());
-    const bool pendulum = slot == kRackPendulumSlot;
-    processor.set_playback_mode(pendulum
-      ? clouds::PLAYBACK_MODE_PENDULUM : static_cast<clouds::PlaybackMode>(slot));
+    const clouds::PlaybackMode mode = modeAt(version, selectedSlot()).playback;
+    const bool pendulum = mode == clouds::PLAYBACK_MODE_PENDULUM;
+    processor.set_playback_mode(mode);
     processor.set_quality(std::lround(params[QUALITY].getValue()));
     processor.Prepare();
 
@@ -113,7 +153,8 @@ struct Superparasites : engine::Module {
     p.reverb = controls[8];
     p.freeze = params[FREEZE].getValue() > 0.5f || freezeGate.isHigh();
     p.capture = capturePending;
-    p.gate = clockGate.isHigh() || captureButton.isHigh() || (!pendulum && capturePending);
+    const bool envelopeGate = clouds::GranularProcessor::uses_envelope_gate(mode);
+    p.gate = clockGate.isHigh() || captureButton.isHigh() || (!envelopeGate && capturePending);
     capturePending = false;
 
     p.kammerl.slice_selection = clamp(inputs[CV + 4].getVoltage() / 5.f, 0.f, 1.f);
@@ -140,6 +181,10 @@ struct Superparasites : engine::Module {
     int produced = outputQueue.capacity();
     outputConverter.process(rendered, &consumed, outputQueue.endData(), &produced);
     outputQueue.endIncr(produced);
+  }
+
+  int selectedSlot() {
+    return clamp(static_cast<int>(std::lround(params[MODE].getValue())), 0, modeCount(version) - 1);
   }
 
   void process(const ProcessArgs&) override {
@@ -186,7 +231,7 @@ constexpr std::array<const char*, 4> kShoegazeSliderLabels = {"Pre Decay", "Post
 constexpr std::array<const char*, 4> kShoegazeKnobLabels = {"Pre Mix", "Post Mix", "Feedback", "Mod Depth"};
 
 struct Panel : widget::Widget {
-  int mode = 0;
+  unsigned modeLeds = kSharedModes[0].leds;
 
   Panel() {
     box.size = math::Vec(kPanelWidth, RACK_GRID_HEIGHT);
@@ -222,9 +267,8 @@ struct Panel : widget::Widget {
     }
 
     // Left-to-right mode indicators follow the Typhoon's four-LED patterns.
-    constexpr std::array<unsigned, 8> patterns = {0x1, 0x2, 0x4, 0x8, 0xe, 0xd, 0xb, 0x7};
     for (int i = 0; i < 4; ++i) {
-      const bool active = (patterns[mode] & (1u << i)) != 0;
+      const bool active = (modeLeds & (1u << i)) != 0;
       nvgBeginPath(args.vg);
       nvgCircle(args.vg, 19.f + 8.f * i, 37.f, 2.4f);
       nvgFillColor(args.vg, active ? nvgRGB(255, 192, 91) : nvgRGB(88, 73, 51));
@@ -252,14 +296,15 @@ struct SuperparasitesWidget : app::ModuleWidget {
   ui::Label* clockLabel;
   std::array<ui::Label*, 4> sliderLabels;
   std::array<ui::Label*, 4> effectLabels;
+  int displayedSlot = 0;
 
-  SuperparasitesWidget(Superparasites* module) {
+  SuperparasitesWidget(Superparasites* module, const char* title) {
     setModule(module);
     faceplate = new Panel;
     setPanel(faceplate);
 
-    label("SUPERPARASITES DEV", 112.5f, 19.f, 180.f, 15.f);
-    modeName = label(kModes.front().c_str(), 126.f, 37.f, 155.f, 10.f);
+    label(title, 112.5f, 19.f, 180.f, 15.f);
+    modeName = label(kSharedModes[0].name, 126.f, 37.f, 155.f, 10.f);
 
     const float top = 73.f;
     label("Mode", 24.f, 50.f, 46.f);
@@ -303,17 +348,21 @@ struct SuperparasitesWidget : app::ModuleWidget {
 
   void step() override {
     if (module) {
-      const int mode = std::lround(module->params[Superparasites::MODE].getValue());
-      if (faceplate->mode != mode) {
-        faceplate->mode = mode;
-        modeName->text = kModes[mode];
-        const bool pendulum = mode == kRackPendulumSlot;
-        const bool shoegaze = mode == clouds::PLAYBACK_MODE_SHOEGAZE;
-        clockLabel->text = pendulum ? "Gate" : "Clock";
+      auto* synth = static_cast<Superparasites*>(module);
+      const int slot = synth->selectedSlot();
+      if (displayedSlot != slot) {
+        displayedSlot = slot;
+        const Mode& mode = modeAt(synth->version, slot);
+        faceplate->modeLeds = mode.leds;
+        modeName->text = mode.name;
+        const bool pendulum = mode.playback == clouds::PLAYBACK_MODE_PENDULUM;
+        const bool adsr = mode.playback == clouds::PLAYBACK_MODE_ADSR;
+        const bool shoegaze = mode.playback == clouds::PLAYBACK_MODE_SHOEGAZE;
+        clockLabel->text = pendulum || adsr ? "Gate" : "Clock";
         for (size_t i = 0; i < sliderLabels.size(); ++i) {
-          if (pendulum) {
+          if (pendulum || adsr) {
             sliderLabels[i]->text = kAdsrLabels[i];
-            effectLabels[i]->text = kPendulumLabels[i];
+            effectLabels[i]->text = pendulum ? kPendulumLabels[i] : "";
           } else if (shoegaze) {
             sliderLabels[i]->text = kShoegazeSliderLabels[i];
             effectLabels[i]->text = kShoegazeKnobLabels[i];
@@ -345,8 +394,25 @@ struct SuperparasitesWidget : app::ModuleWidget {
   }
 };
 
+struct Typhoon : Superparasites {
+  Typhoon() : Superparasites(Version::Typhoon) {}
+};
+
+struct MesoTyphoon : Superparasites {
+  MesoTyphoon() : Superparasites(Version::MesoTyphoon) {}
+};
+
+struct TyphoonWidget : SuperparasitesWidget {
+  explicit TyphoonWidget(Typhoon* module) : SuperparasitesWidget(module, "Typhoon") {}
+};
+
+struct MesoTyphoonWidget : SuperparasitesWidget {
+  explicit MesoTyphoonWidget(MesoTyphoon* module) : SuperparasitesWidget(module, "MesoTyphoon") {}
+};
+
 }  // namespace
 
 void init(Plugin* plugin) {
-  plugin->addModel(createModel<Superparasites, SuperparasitesWidget>("Superparasites"));
+  plugin->addModel(createModel<Typhoon, TyphoonWidget>("Typhoon"));
+  plugin->addModel(createModel<MesoTyphoon, MesoTyphoonWidget>("Superparasites"));
 }

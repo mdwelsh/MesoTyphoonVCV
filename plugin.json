@@ -1,15 +1,28 @@
 {
-  "slug": "SuperparasitesDev",
-  "name": "Superparasites Dev",
-  "version": "2.0.0",
-  "license": "MIT",
-  "brand": "Superparasites",
-  "author": "Superparasites contributors",
+  "slug": "NegativeDamage",
+  "name": "NegativeDamage",
+  "version": "2.4.0",
+  "license": "GPL-3.0-or-later",
+  "brand": "Negative Damage",
+  "author": "Negative Damage",
+  "authorEmail": "",
+  "authorUrl": "https://github.com/mdwelsh",
+  "pluginUrl": "https://github.com/mdwelsh/superparasites/rack",
+  "manualUrl": "https://github.com/mdwelsh/superparasites/blob/master/rack/README.md",
+  "sourceUrl": "https://github.com/mdwelsh/superparasites",
+  "donateUrl": "",
+  "changelogUrl": "",
   "modules": [
     {
-      "slug": "Superparasites",
-      "name": "Superparasites Dev",
-      "description": "Development module for auditioning the eight Superparasites DSP modes",
+      "slug": "Typhoon",
+      "name": "Typhoon",
+      "description": "Emulation of the Typhoon module, featuring the eight original modes from the Superparasites firmware",
+      "tags": ["Effect", "Granular", "Delay", "Reverb"]
+    },
+    {
+      "slug": "MesoTyphoon",
+      "name": "MesoTyphoon",
+      "description": "Typhoon module emulation with additional modes: Shoegaze, Chaotic Pendulum, and ADSR Envelope",
       "tags": ["Effect", "Granular", "Delay", "Reverb"]
     }
   ]

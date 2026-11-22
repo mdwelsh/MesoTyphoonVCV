@@ -1,9 +1,16 @@
-# Superparasites Dev for VCV Rack 2
+# Typhoon and MesoTyphoon for VCV Rack 2
 
-This local development module builds the same processor and resources used by
-the firmware. It exposes eight modes and the four mono/stereo, 8-/16-bit
-quality settings. It resamples Rack audio to 32 kHz and processes 32-frame
-blocks. An unpatched right input takes the left input.
+One plugin package provides two modules that build the same processor and
+resources used by the [MesoParasites firmware](../README.md). Both resample Rack audio to 32 kHz and process
+32-frame blocks. An unpatched right input takes the left input.
+
+| Module | Mode selection |
+| --- | --- |
+| **Typhoon** | The eight original modes, including Beat Repeat and Spectral Clouds. |
+| **MesoTyphoon** | The six shared modes, followed by Shoegaze, Chaotic Pendulum, and ADSR Envelope. |
+
+Rack patches saved with **Superparasites Dev** open as **MesoTyphoon**. The
+existing mode, control, and jack IDs are preserved.
 
 ## Build and install
 
@@ -18,7 +25,7 @@ make -C rack RACK_DIR=/absolute/path/to/Rack-SDK install
 
 If the SDK is in `build/rack-sdk/Rack-SDK`, omit `RACK_DIR`. The package is
 in `rack/dist/`. The SDK install target copies it into Rack's architecture-specific
-plugin directory. Restart Rack and search for **Superparasites Dev**. Rebuild,
+plugin directory. Restart Rack and search for **Typhoon** or **MesoTyphoon**. Rebuild,
 reinstall, and restart after editing the DSP.
 
 ## Audition a change
@@ -32,6 +39,14 @@ Feedback, and Reverb below them, following the
 by the mode name show the Typhoon's mode pattern. The **Clock** input accepts a trigger
 or clock, and **Trig** fires a manual trigger. Use **Freeze** or the **Hold**
 gate input to hold the buffer in recording modes.
+
+In **Typhoon**, patch an incoming clock in **Beat Repeat** to establish tempo.
+The **Quality** knob selects stereo or mono and 16-bit or 8-bit operation in
+the sample-buffer modes of both modules.
+
+In **MesoTyphoon**, **ADSR Envelope** shapes incoming stereo audio. Patch a
+note gate to **Gate** or hold the **Trig** button, and set the envelope with
+the four sliders.
 
 In **Shoegaze** mode, patch audio into **In L/R**. The four sliders are
 **Pre Decay**, **Post Decay**, **Fuzz**, and **Tone**. The first two knobs are
@@ -58,6 +73,6 @@ to preserve existing patches.
 
 This desktop wrapper approximates the Typhoon's control scaling. Rack input
 full scale is ±5 V. The wrapper does not simulate the Typhoon's analog signal
-path, ADC smoothing, calibration, or bootloader. Use one Superparasites Dev
-instance when auditioning. The shared firmware RNG assumes a single processing
-thread and can race if Rack runs several instances on different workers.
+path, ADC smoothing, calibration, or bootloader. Set Rack to one engine thread
+when comparing multiple instances. The shared firmware RNG assumes a single
+processing thread and can race if those instances run on different workers.
