@@ -1,7 +1,7 @@
 # Typhoon and MesoTyphoon for VCV Rack 2
 
 One plugin package provides two modules that build the same processor and
-resources used by the [MesoParasites firmware](../README.md). Both resample Rack audio to 32 kHz and process
+resources used by the [MesoParasites firmware](https://github.com/mdwelsh/MesoTyphoon). Both resample Rack audio to 32 kHz and process
 32-frame blocks. An unpatched right input takes the left input.
 
 | Module | Mode selection |
@@ -9,24 +9,31 @@ resources used by the [MesoParasites firmware](../README.md). Both resample Rack
 | **Typhoon** | The eight original modes, including Beat Repeat and Spectral Clouds. |
 | **MesoTyphoon** | The six shared modes, followed by Shoegaze, Chaotic Pendulum, and ADSR Envelope. |
 
-Rack patches saved with **Superparasites Dev** open as **MesoTyphoon**. The
-existing mode, control, and jack IDs are preserved.
+The plugin uses the **Negative Damage** brand in Rack.
 
 ## Build and install
 
 Install a C++ toolchain, Make, jq, and zstd. Download and extract the
 [Rack 2 SDK](https://vcvrack.com/downloads/) for your platform and Rack version.
-From the repository root, with the git submodules initialized, run:
+From the repository root, initialize the pinned firmware and its DSP library:
 
 ```sh
-make -C rack RACK_DIR=/absolute/path/to/Rack-SDK dist
-make -C rack RACK_DIR=/absolute/path/to/Rack-SDK install
+git submodule update --init firmware
+git -C firmware submodule update --init stmlib
+```
+
+Build and install the two-module package:
+
+```sh
+make RACK_DIR=/absolute/path/to/Rack-SDK dist
+make RACK_DIR=/absolute/path/to/Rack-SDK install
 ```
 
 If the SDK is in `build/rack-sdk/Rack-SDK`, omit `RACK_DIR`. The package is
-in `rack/dist/`. The SDK install target copies it into Rack's architecture-specific
-plugin directory. Restart Rack and search for **Typhoon** or **MesoTyphoon**. Rebuild,
-reinstall, and restart after editing the DSP.
+in `dist/`. Restart Rack and search for **Typhoon** or **MesoTyphoon**.
+To audition DSP changes from another firmware checkout, pass its path as
+`FIRMWARE_DIR`, with its `stmlib` submodule initialized. Use a clean build
+when switching between firmware checkouts.
 
 ## Audition a change
 
