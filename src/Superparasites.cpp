@@ -1,3 +1,9 @@
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <string>
+#include <vector>
+
 #include <rack.hpp>
 
 #include "supercell/dsp/granular_processor.h"
