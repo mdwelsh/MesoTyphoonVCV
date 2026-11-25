@@ -65,6 +65,12 @@ const std::array<const char*, 9> kControlNames = {
   "Mix", "Spread", "Feedback", "Reverb",
 };
 
+// Value-initializing this type zeroes the entire base subobject before its
+// constructor runs, matching the firmware's static storage initialization.
+struct RackGranularProcessor : clouds::GranularProcessor {
+  RackGranularProcessor() = default;
+};
+
 struct Superparasites : engine::Module {
   enum ParamId { MODE, QUALITY, FREEZE, CAPTURE, CONTROL, NUM_PARAMS = CONTROL + 9 };
   enum InputId { LEFT, RIGHT, CLOCK, FREEZE_GATE, VOCT, CV, NUM_INPUTS = CV + 9 };
@@ -72,10 +78,9 @@ struct Superparasites : engine::Module {
 
   const Version version;
 
-  // The embedded processor starts with zero-initialized state on the STM32.
   alignas(16) std::array<uint8_t, 118784> largeMemory{};
   alignas(16) std::array<uint8_t, 65536 - 128> smallMemory{};
-  clouds::GranularProcessor processor{};
+  RackGranularProcessor processor{};
 
   using StereoFrame = dsp::Frame<2>;
   dsp::SampleRateConverter<2> inputConverter, outputConverter;
